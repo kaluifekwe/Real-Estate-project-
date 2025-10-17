@@ -26,9 +26,9 @@ jobs:
 
       - name: Build, tag, and push image to Amazon ECR
         run: |
-          docker build -t real-easte:v1 .
-          docker tag real-easte:v1 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v1
-          docker push 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v1
+          docker build -t real-easte:v2 .
+          docker tag real-easte:v2 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
+          docker push 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
 
 
   deploy:
@@ -41,6 +41,6 @@ jobs:
           chmod 600 "my ssh key.pem"
           
 
-          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker pull 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v1
+          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker pull 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
 
-          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker run -d -p 8081:80 --name real-estate 1134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v1
+          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker run -d -p 8081:80 --name real-estate 1134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
