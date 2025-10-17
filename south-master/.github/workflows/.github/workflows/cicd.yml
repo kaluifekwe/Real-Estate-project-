@@ -1,46 +1,95 @@
-name: Build and Push to ECR
+name: Build, Push to ECR, Deploy to EC2
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ACCOUNT_ID: "134606630954"
+  ECR_REPO: "real-estate"   # make sure your ECR repo is named exactly this
 
 jobs:
   build-push:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         run: |
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 134606630954.dkr.ecr.us-east-1.amazonaws.com
+          aws ecr get-login-password --region "$AWS_REGION" \
+          | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
-      - name: Build, tag, and push image to Amazon ECR
+      - name: Set image tags
+        id: vars
         run: |
-          docker build -t real-easte:v2 .
-          docker tag real-easte:v2 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
-          docker push 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
+          SHA="${GITHUB_SHA::12}"
+          echo "SHA=$SHA" >> $GITHUB_OUTPUT
+          echo "IMAGE=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${SHA}" >> $GITHUB_OUTPUT
+          echo "LATEST=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest" >> $GITHUB_OUTPUT
 
+      - name: Build Docker image
+        run: |
+          docker build -t "${{ steps.vars.outputs.IMAGE }}" -t "${{ steps.vars.outputs.LATEST }}" .
+
+      - name: Push to ECR
+        run: |
+          docker push "${{ steps.vars.outputs.IMAGE }}"
+          docker push "${{ steps.vars.outputs.LATEST }}"
 
   deploy:
     runs-on: ubuntu-latest
     needs: build-push
-    steps: 
-      - name: check my EC2_SSH_KEY
+    steps:
+      - name: Write SSH key
         run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > "my ssh key.pem"
-          chmod 600 "my ssh key.pem"
-          
+          echo "${{ secrets.EC2_SSH_KEY }}" > ec2_key.pem
+          chmod 600 ec2_key.pem
 
-          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker pull 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
+      - name: Deploy on EC2
+        env:
+          HOST: 44.213.121.222      # your EC2 public IP or DNS
+          USER: ubuntu              # if your AMI is Ubuntu; use ec2-user for Amazon Linux
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ACCOUNT_ID: 134606630954
+          ECR_REPO: real-estate
+          SHA: ${{ needs.build-push.outputs.SHA || github.sha }}
+        run: |
+          # Compose the image ref (fallback to latest if SHA not exported)
+          IMG="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA::12}"
 
-          ssh -o StrictHostKeyChecking=no -i "my ssh key.pem" ubuntu@44.213.121.222 "docker run -d -p 8081:80 --name real-estate 1134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
+          ssh -o StrictHostKeyChecking=no -i ec2_key.pem ${USER}@${HOST} << 'EOF'
+          set -e
+
+          # install docker if missing (Ubuntu)
+          if ! command -v docker >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io
+            sudo systemctl enable --now docker
+          fi
+
+          # install awscli if missing
+          if ! command -v aws >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y awscli
+          fi
+          EOF
+
+          # ECR login on the EC2 host (requires awscli + either instance role or aws configure)
+          ssh -o StrictHostKeyChecking=no -i ec2_key.pem ${USER}@${HOST} "
+            aws ecr get-login-password --region ${AWS_REGION} \
+            | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com && \
+            docker pull ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA::12} && \
+            docker stop real-estate 2>/dev/null || true && \
+            docker rm real-estate 2>/dev/null || true && \
+            docker run -d -p 8081:80 --name real-estate ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${GITHUB_SHA::12}
+          "
