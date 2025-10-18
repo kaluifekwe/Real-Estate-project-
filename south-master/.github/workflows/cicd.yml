@@ -35,10 +35,10 @@ jobs:
       - name: Build, tag, and push image to Amazon ECR
         run: |
           # Build the Docker image
-          docker build -t real-easte .
+          docker build -t real-easte:v2 .
 
           # Tag the image for ECR
-          docker tag real-easte:latest 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:latest
+          docker tag real-easte:v2 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
 
           # Push the image to ECR
-          docker push 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:latest
+          docker push 134606630954.dkr.ecr.us-east-1.amazonaws.com/real-easte:v2
